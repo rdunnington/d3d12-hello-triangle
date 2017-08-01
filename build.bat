@@ -37,7 +37,7 @@ REM /MP - multithreaded compilation
 REM SET CFLAGS=/Z7 /W4 /sdl /MT /GR- /EHa /WX /nologo /Oi /Yc"precompiled.h" /Gm-
 SET CFLAGS=/Z7 /W4 /sdl /MT /GR- /EHa /WX /nologo /Oi /Gm- /MP
 
-SET LIBS="kernel32.lib" "user32.lib" "gdi32.lib" "d3d12.lib" "dxguid.lib" "dxgi.lib"
+SET LIBS="kernel32.lib" "user32.lib" "gdi32.lib" "d3d12.lib" "dxguid.lib" "dxgi.lib" "d3dcompiler.lib"
 
 REM opt:ref - strip unreferenced functions/data
 REM /SUBSYSTEM:windows,5.1 - run on Windows XP
