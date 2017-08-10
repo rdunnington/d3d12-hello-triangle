@@ -67,13 +67,19 @@ bool readFile(const char* path, char** o_buffer, size_t* o_size)
 
 ////////////////////////////////////////////////////////////////////////////////
 
-D3D12_CPU_DESCRIPTOR_HANDLE get_descriptor_handle_d3d12(ID3D12DescriptorHeap* heap) {
+D3D12_CPU_DESCRIPTOR_HANDLE get_descriptor_handle_d3d12(ID3D12DescriptorHeap* heap, D3D12_DESCRIPTOR_HEAP_TYPE heapType, size_t index, ID3D12Device* device) {
 	// NOTE - The Microsoft declaration for this function is broken for the C interface
 	typedef void(*GetCpuHandleHack)(ID3D12DescriptorHeap*, D3D12_CPU_DESCRIPTOR_HANDLE*);
 	GetCpuHandleHack func = (GetCpuHandleHack)heap->lpVtbl->GetCPUDescriptorHandleForHeapStart;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE handle = { 0 };
 	func(heap, &handle);
+
+	if (index > 0) {
+		const UINT size = ID3D12Device_GetDescriptorHandleIncrementSize(device, heapType);
+		handle.ptr += index * size;
+	}
+
 	return handle;
 }
 
@@ -115,6 +121,12 @@ struct vertex {
 	struct vec4f color;
 };
 
+struct app_state {
+	struct renderer_d3d12* renderer;
+	struct resources_d3d12* resources;
+	struct windowsize windowsize;
+};
+
 void wait_for_frame(struct renderer_d3d12* renderer, struct resources_d3d12* resources);
 
 bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* resources, HWND window, struct windowsize ws) {
@@ -133,7 +145,12 @@ bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* reso
 	////////////////////////////////////////////////////////////////////////////////	
 	// create pipeline objects
 	{
-		HRESULT  hr = CreateDXGIFactory1(&IID_IDXGIFactory4, &renderer->factory);
+		UINT flags = 0;
+		#if BUILD_DEBUG
+			flags |= DXGI_CREATE_FACTORY_DEBUG;
+		#endif
+
+		HRESULT  hr = CreateDXGIFactory2(flags, &IID_IDXGIFactory4, &renderer->factory);
 		if (!SUCCEEDED(hr)) {
 			printf("Failed to create factory: %u\n", hr);
 			return false;
@@ -228,7 +245,8 @@ bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* reso
 		const UINT rtvDescriptorSize = 
 			ID3D12Device_GetDescriptorHandleIncrementSize(renderer->device, D3D12_DESCRIPTOR_HEAP_TYPE_RTV);
 
-		D3D12_CPU_DESCRIPTOR_HANDLE rtvDescriptorHandle = get_descriptor_handle_d3d12(renderer->rtvDescriptorHeap);
+		D3D12_CPU_DESCRIPTOR_HANDLE rtvDescriptorHandle = 
+			get_descriptor_handle_d3d12(renderer->rtvDescriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 0, renderer->device);
 
 		for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
 			HRESULT hr = IDXGISwapChain1_GetBuffer(renderer->swapchain, i, &IID_ID3D12Resource, &renderer->targets[i]);
@@ -298,6 +316,7 @@ bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* reso
 		#if BUILD_DEBUG
 			compileFlags |= D3DCOMPILE_DEBUG;
 			compileFlags |= D3DCOMPILE_SKIP_OPTIMIZATION;
+			//compilerFlags |= D3DCOMPILE_ALL_RESOURCES_BOUND; // TODO research this
 		#endif
 
 		HRESULT hr = D3DCompile(data, filesize, NULL, NULL, NULL, "VSMain", "vs_4_0", compileFlags, 0, &vs, NULL);
@@ -541,7 +560,8 @@ void wait_for_frame(struct renderer_d3d12* renderer, struct resources_d3d12* res
 
 	++resources->fenceValue;
 	
-	if (ID3D12Fence_GetCompletedValue(resources->fence) < value) {
+	uint64_t completed = ID3D12Fence_GetCompletedValue(resources->fence);
+	if (completed < value) {
 		hr = ID3D12Fence_SetEventOnCompletion(resources->fence, value, resources->fenceEvent);
 		if (!SUCCEEDED(hr)) {
 			printf("Failed to set event on completion flag: %d\n", hr);
@@ -600,7 +620,10 @@ void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* re
 	};
 	ID3D12GraphicsCommandList_ResourceBarrier(renderer->cmdlist, 1, &toRenderTargetBarrier);
 
-	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = get_descriptor_handle_d3d12(renderer->rtvDescriptorHeap);
+	D3D12_CPU_DESCRIPTOR_HANDLE rtvHandle = get_descriptor_handle_d3d12(renderer->rtvDescriptorHeap, 
+																		D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 
+																		resources->frameIndex, 
+																		renderer->device);
 	ID3D12GraphicsCommandList_OMSetRenderTargets(renderer->cmdlist, 1, &rtvHandle, FALSE, NULL);
 
 	// clear backbuffer
@@ -608,16 +631,19 @@ void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* re
 	ID3D12GraphicsCommandList_ClearRenderTargetView(renderer->cmdlist, rtvHandle, clearcolor, 0, NULL);
 
 	// draw calls!
-	//ID3D12GraphicsCommandList_IASetPrimitiveTopology(renderer->cmdlist, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-	//ID3D12GraphicsCommandList_IASetVertexBuffers(renderer->cmdlist, 0, 1, resources->vertexBufferView);
-	//ID3D12GraphicsCommandList_DrawInstanced(renderer->cmdlist, 3, 1, 0, 0);
+	ID3D12GraphicsCommandList_IASetPrimitiveTopology(renderer->cmdlist, D3D_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+	ID3D12GraphicsCommandList_IASetVertexBuffers(renderer->cmdlist, 0, 1, &resources->vertexBufferView);
+	ID3D12GraphicsCommandList_DrawInstanced(renderer->cmdlist, 3, 1, 0, 0);
 	
 	D3D12_RESOURCE_BARRIER toPresentBarrier = toRenderTargetBarrier;
 	toPresentBarrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
 	toPresentBarrier.Transition.StateAfter = D3D12_RESOURCE_STATE_PRESENT;
 
 	ID3D12GraphicsCommandList_ResourceBarrier(renderer->cmdlist, 1, &toPresentBarrier);
-	ID3D12GraphicsCommandList_Close(renderer->cmdlist);
+	hr = ID3D12GraphicsCommandList_Close(renderer->cmdlist);
+	if (!SUCCEEDED(hr)) {
+		printf("Failed to close command list: %d\n", hr);
+	}
 
 	// execute
     ID3D12GraphicsCommandList* cmdlists[] = { renderer->cmdlist };
@@ -632,25 +658,42 @@ void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* re
 			printf("Failed to present backbuffer: %u\n", hr);
 		}
 	}
-	// wait for frame
 }
 
 LRESULT CALLBACK WindowProc(HWND hWindow, UINT msg, WPARAM wparam, LPARAM lparam) {
     const POINT kMinSize = {1, 1};
     switch (msg)
     {
+	case WM_CREATE:
+		{
+			CREATESTRUCT* info = (CREATESTRUCT*)lparam;
+			LONG_PTR userdata = (LONG_PTR)info->lpCreateParams;
+			if (!SetWindowLongPtr(hWindow, GWLP_USERDATA, userdata)) {
+				printf("Something went wrong setting window's userdata: %d\n", GetLastError());
+			}
+		}
+		return 0;
+
+	case WM_DESTROY:
     case WM_CLOSE:
         PostQuitMessage(0);
-        break;
+        return 0;
+
     case WM_PAINT:
-        // draw graphics
-        break;
+		{
+			struct app_state* params = (struct app_state*)GetWindowLongPtr(hWindow, GWLP_USERDATA);
+			renderer_update(params->renderer, params->resources, params->windowsize);
+			wait_for_frame(params->renderer, params->resources);
+		}
+        return 0;
+
     case WM_GETMINMAXINFO:
         ((MINMAXINFO*)lparam)->ptMinTrackSize = kMinSize;
-        break;
+        return 0;
+
     case WM_SIZE:
         // TODO handle resizing
-        break;
+        return 0;
     }
     return DefWindowProc(hWindow, msg, wparam, lparam);
 }
@@ -675,6 +718,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 	const uint32_t WINDOW_WIDTH = 1280;
 	const uint32_t WINDOW_HEIGHT = 720;
 
+	struct app_state app = {0};
+
     HWND window = CreateWindowEx(0,
                                  "DemoWindow",
                                  "pbr_demo",
@@ -684,7 +729,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
                                  NULL,
                                  NULL,
                                  hInstance,
-                                 NULL);
+                                 &app);
     if (!window)
     {
         printf("Failed to create window.");
@@ -697,6 +742,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 	if (!renderer_init(&renderer, &resources, window, ws)) {
 		return 1;
 	}
+
+	app = (struct app_state){
+		.renderer = &renderer,
+		.resources = &resources,
+		.windowsize = ws,
+	};
 
 	////////////////////////////////////////////////////////////////////////////////	
     {
@@ -715,10 +766,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
                 DispatchMessage(&msg);
             }
 
-			renderer_update(&renderer, &resources, ws);
-			wait_for_frame(&renderer, &resources);
-
-            RedrawWindow(window, NULL, NULL, RDW_INTERNALPAINT);
+            //RedrawWindow(window, NULL, NULL, RDW_INTERNALPAINT);
         }
     }
 
