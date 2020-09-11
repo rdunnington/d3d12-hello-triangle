@@ -59,7 +59,8 @@ bool readFile(const char* path, char** o_buffer, size_t* o_size)
 	(*o_buffer)[*o_size] = 0;
 
 	DWORD bytesRead = 0;
-	success = ReadFile(file, *o_buffer, *o_size, &bytesRead, NULL);
+	DWORD filesize = (DWORD)*o_size;
+	success = ReadFile(file, *o_buffer, filesize, &bytesRead, NULL);
 	CloseHandle(file);
 
 	return success;
@@ -254,7 +255,7 @@ bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* reso
 			get_descriptor_handle_d3d12(renderer->rtvDescriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 0, renderer->device);
 
 		for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
-			HRESULT hr = IDXGISwapChain1_GetBuffer(renderer->swapchain, i, &IID_ID3D12Resource, &resources->targets[i]);
+			HRESULT hr = IDXGISwapChain1_GetBuffer(renderer->swapchain, (UINT)i, &IID_ID3D12Resource, &resources->targets[i]);
 			if (!SUCCEEDED(hr)) {
 				return false;
 			}
