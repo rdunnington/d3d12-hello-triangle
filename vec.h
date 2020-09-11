@@ -157,3 +157,19 @@ INLINE struct vec4f vec_vec4f(vec v) {
 	return copy;
 }
 
+INLINE struct vec2f vec2f(float x, float y) {
+	return (struct vec2f){ x, y };
+}
+
+INLINE struct vec3f vec3f(float x, float y, float z) {
+	return (struct vec3f){ x, y, z };
+}
+
+INLINE struct vec4f vec4f(float x, float y, float z, float w) {
+	return (struct vec4f){ x, y, z, w };
+}
+
+const struct vec2f VEC2F_ZERO = {0,0};
+const struct vec3f VEC3F_ZERO = {0,0,0};
+const struct vec4f VEC4F_ZERO = {0,0,0,0};
+

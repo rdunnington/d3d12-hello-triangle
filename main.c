@@ -100,7 +100,6 @@ struct renderer_d3d12 {
 	ID3D12CommandQueue* queue;
 	IDXGISwapChain4* swapchain;
 	ID3D12DescriptorHeap* rtvDescriptorHeap;
-	ID3D12Resource* targets[NUM_RENDERTARGETS]; // TODO move to resources_d3d12 stuct
 	ID3D12CommandAllocator* commandAllocator;
 	ID3D12RootSignature* rootSignature;
 	ID3D12PipelineState* pipeline;
@@ -108,12 +107,18 @@ struct renderer_d3d12 {
 };
 
 struct resources_d3d12 {
+	ID3D12Resource* targets[NUM_RENDERTARGETS]; // TODO move to resources_d3d12 stuct
 	ID3D12Resource* vertexBuffer;
 	D3D12_VERTEX_BUFFER_VIEW vertexBufferView;
 	ID3D12Fence* fence;
 	HANDLE fenceEvent;
 	uint32_t fenceValue;
 	UINT frameIndex;
+
+	struct {
+		struct vec3f pos;
+		struct vec3f dir;
+	} camera;
 };
 
 struct vertex {
@@ -249,11 +254,11 @@ bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* reso
 			get_descriptor_handle_d3d12(renderer->rtvDescriptorHeap, D3D12_DESCRIPTOR_HEAP_TYPE_RTV, 0, renderer->device);
 
 		for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
-			HRESULT hr = IDXGISwapChain1_GetBuffer(renderer->swapchain, i, &IID_ID3D12Resource, &renderer->targets[i]);
+			HRESULT hr = IDXGISwapChain1_GetBuffer(renderer->swapchain, i, &IID_ID3D12Resource, &resources->targets[i]);
 			if (!SUCCEEDED(hr)) {
 				return false;
 			}
-			ID3D12Device_CreateRenderTargetView(renderer->device, renderer->targets[i], NULL, rtvDescriptorHandle);
+			ID3D12Device_CreateRenderTargetView(renderer->device, resources->targets[i], NULL, rtvDescriptorHandle);
 			rtvDescriptorHandle.ptr += rtvDescriptorSize;
 		}
 	}
@@ -536,16 +541,16 @@ void renderer_free(struct renderer_d3d12* renderer) {
 	ID3D12RootSignature_Release(renderer->rootSignature);
 	ID3D12PipelineState_Release(renderer->pipeline);
 	ID3D12GraphicsCommandList_Release(renderer->cmdlist);
-
-	for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
-		ID3D12Resource_Release(renderer->targets[i]);
-	}
 }
 
 void resources_free(struct resources_d3d12* resources) {
 	ID3D12Resource_Release(resources->vertexBuffer);
 	ID3D12Fence_Release(resources->fence);
 	CloseHandle(resources->fenceEvent);
+
+	for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
+		ID3D12Resource_Release(resources->targets[i]);
+	}
 }
 
 void wait_for_frame(struct renderer_d3d12* renderer, struct resources_d3d12* resources) {
@@ -612,7 +617,7 @@ void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* re
 		.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION,
 		.Flags = D3D12_RESOURCE_BARRIER_FLAG_NONE,
 		.Transition = {
-			.pResource = renderer->targets[resources->frameIndex],
+			.pResource = resources->targets[resources->frameIndex],
 			.StateBefore = D3D12_RESOURCE_STATE_PRESENT,
 			.StateAfter = D3D12_RESOURCE_STATE_RENDER_TARGET,
 			.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES,
@@ -738,7 +743,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 
 	struct windowsize ws = { .width = WINDOW_WIDTH, .height = WINDOW_HEIGHT };
 	struct renderer_d3d12 renderer = {0};
-	struct resources_d3d12 resources = {0};
+	struct resources_d3d12 resources = {
+		.camera = {
+			.pos = vec3f(0,0,1),
+			.dir = vec3f(0,0,-1),
+		},
+	};
 	if (!renderer_init(&renderer, &resources, window, ws)) {
 		return 1;
 	}
