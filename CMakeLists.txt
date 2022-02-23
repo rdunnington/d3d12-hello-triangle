@@ -1,5 +1,5 @@
 cmake_minimum_required (VERSION 3.14)
-project (dx12hello-trinangle C)
+project (d3d12-hello-triangle C)
 
 set_target_properties(${TARGET_NAME} PROPERTIES C_STANDARD 17)
 set_target_properties(${TARGET_NAME} PROPERTIES CMAKE_C_STANDARD_REQUIRED True)
