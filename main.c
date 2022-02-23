@@ -18,8 +18,6 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include "vec.h"
-
 #define STATIC_ARRAY_LENGTH(array) (sizeof(array) / sizeof(*(array)))
 
 #if defined(_DEBUG) || defined(DEBUG) 
@@ -27,50 +25,6 @@
 		#define BUILD_DEBUG 1
 	#endif
 #endif
-
-////////////////////////////////////////////////////////////////////////////////
-
-bool readFile(const char* path, char** o_buffer, size_t* o_size)
-{
-	HANDLE file = CreateFile(path,
-		GENERIC_READ,
-		FILE_SHARE_READ,       // share for reading
-		NULL,                  // default security
-		OPEN_EXISTING,         // existing file only
-		FILE_ATTRIBUTE_NORMAL, // normal file
-		NULL);                 // no attr. template	if (file == INVALID_HANDLE_VALUE)
-
-	if (file == INVALID_HANDLE_VALUE) {
-		printf("Failed to open file \"%s\" handle\n", path);
-		return false;
-	}
-
-	LARGE_INTEGER size = { 0 };
-	BOOL success = GetFileSizeEx(file, &size);
-	if (!success) {
-		printf("Failed to get file size\n");
-		return false;
-	}
-
-	*o_size = (size_t)size.QuadPart;
-
-	if (*o_size == 0) {
-		printf("File \"%s\" size was 0\n", path);
-		return false;
-	}
-
-	// We add an extra 1 to the end of the filesize to null-terminate it in case it's a 
-	// text file to simplify resource loading code.
-	*o_buffer = malloc(*o_size + 1);
-	(*o_buffer)[*o_size] = 0;
-
-	DWORD bytesRead = 0;
-	DWORD filesize = (DWORD)*o_size;
-	success = ReadFile(file, *o_buffer, filesize, &bytesRead, NULL);
-	CloseHandle(file);
-
-	return success;
-}
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -121,16 +75,6 @@ struct resources_d3d12 {
 	HANDLE fenceEvent;
 	uint32_t fenceValue;
 	UINT frameIndex;
-
-	struct {
-		struct vec3f pos;
-		struct vec3f dir;
-	} camera;
-};
-
-struct vertex {
-	struct vec3f pos;
-	struct vec4f color;
 };
 
 struct app_state {
@@ -224,7 +168,7 @@ void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* re
 	ID3D12GraphicsCommandList_OMSetRenderTargets(renderer->cmdlist, 1, &rtvHandle, FALSE, NULL);
 
 	// clear backbuffer
-	const float clearcolor[] = { 0.0f, 0.2f, 0.4f, 1.0f };
+	const float clearcolor[] = { 0.05f, 0.05f, 0.05f, 1.0f };
 	ID3D12GraphicsCommandList_ClearRenderTargetView(renderer->cmdlist, rtvHandle, clearcolor, 0, NULL);
 
 	// draw calls!
@@ -308,7 +252,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 	win_class.style = CS_HREDRAW | CS_VREDRAW;
 	win_class.lpfnWndProc = WindowProc;
 	win_class.hInstance = hInstance;
-	win_class.lpszClassName = "DemoWindow";
+	win_class.lpszClassName = "HelloTriangleWindow";
 	if (!RegisterClassEx(&win_class))
 	{
 		printf("Failed to create window class.");
@@ -321,8 +265,8 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 	struct app_state app = {0};
 
 	HWND window = CreateWindowEx(0,
-								 "DemoWindow",
-								 "pbr_demo",
+								 "HelloTriangleWindow",
+								 "Hello Triangle",
 								 WS_OVERLAPPEDWINDOW | WS_VISIBLE | WS_SYSMENU,
 								 100, 100,
 								 WINDOW_WIDTH, WINDOW_HEIGHT,
@@ -338,12 +282,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 
 	struct windowsize ws = { .width = WINDOW_WIDTH, .height = WINDOW_HEIGHT };
 	struct renderer_d3d12 renderer = {0};
-	struct resources_d3d12 resources = {
-		.camera = {
-			.pos = vec3f(0,0,1),
-			.dir = vec3f(0,0,-1),
-		},
-	};
+	struct resources_d3d12 resources = { 0 };
 
 	////////////////////////////////////////////////////////////////////////////////	
 	// debug reporting
@@ -521,11 +460,22 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 		ID3DBlob* vs;
 		ID3DBlob* ps;
 
-		char* data = NULL;
-		size_t filesize = 0;
-		if (!readFile("shaders.hlsl", &data, &filesize)) {
-			return false;
-		}
+		const char data[] = 
+			"struct PSInput {\n"
+			"	float4 position : SV_POSITION;\n"
+			"	float4 color : COLOR;\n"
+			"};\n"
+			"PSInput VSMain(float4 position : POSITION0, float4 color : COLOR0) {\n"
+			"	PSInput result;\n"
+			"	result.position = position;\n"
+			"	result.color = color;\n"
+			"	return result;\n"
+			"}\n"
+			"float4 PSMain(PSInput input) : SV_TARGET {\n"
+			"	return input.color;\n"
+			"}\n";
+
+		const size_t data_size = STATIC_ARRAY_LENGTH(data);
 
 		UINT compileFlags = 0;
 		#if BUILD_DEBUG
@@ -534,12 +484,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 			//compilerFlags |= D3DCOMPILE_ALL_RESOURCES_BOUND; // TODO research this
 		#endif
 
-		HRESULT hr = D3DCompile(data, filesize, NULL, NULL, NULL, "VSMain", "vs_4_0", compileFlags, 0, &vs, NULL);
+		HRESULT hr = D3DCompile(data, data_size, NULL, NULL, NULL, "VSMain", "vs_4_0", compileFlags, 0, &vs, NULL);
 		if (!SUCCEEDED(hr)) {
 			printf("Failed to compile vertex shader: %u\n", hr);
 			return false;
 		}
-		hr = D3DCompile(data, filesize, NULL, NULL, NULL, "PSMain", "ps_4_0", compileFlags, 0, &ps, NULL);
+		hr = D3DCompile(data, data_size, NULL, NULL, NULL, "PSMain", "ps_4_0", compileFlags, 0, &ps, NULL);
 		if (!SUCCEEDED(hr)) {
 			printf("Failed to compile vertex shader: %u\n", hr);
 			return false;
@@ -656,13 +606,14 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 		}
 	}
 
-	// TODO research more efficient way of uploading vertex buffers in the future
 	{
 		float aspect = (float)ws.width / (float)ws.height;
-		struct vertex vertices[] = {
-			{ .pos = { 0, .25f * aspect, 0.0f, }, .color = {1,0,0,0} },
-			{ .pos = { .25f, -.25f * aspect, 0.0f, }, .color = {1,0,0,0} },
-			{ .pos = { -.25f, -.25f * aspect, 0.0f, }, .color = {1,0,0,0} },
+
+		const float vertices[] = {
+			// pos  						color
+			 0.00f,  0.25f * aspect, 0.0f,	1,0,0,0,
+			 0.25f, -0.25f * aspect, 0.0f, 	0,1,0,0,
+			-0.25f, -0.25f * aspect, 0.0f, 	0,0,1,0,
 		};
 
 		const D3D12_HEAP_PROPERTIES heapProps = {
@@ -708,7 +659,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 
 		D3D12_VERTEX_BUFFER_VIEW vbView = {
 			.BufferLocation = ID3D12Resource_GetGPUVirtualAddress(resources.vertexBuffer),
-			.StrideInBytes = sizeof(struct vertex),
+			.StrideInBytes = sizeof(float) * (3 + 4),
 			.SizeInBytes = sizeof(vertices),
 		};
 		resources.vertexBufferView = vbView;
