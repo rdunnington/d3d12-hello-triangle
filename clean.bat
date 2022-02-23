@@ -1,11 +1,8 @@
 @ECHO OFF
-rm *.obj
-rm *.exe
-rm *.pdb
-rm *.lib
-rm *.dll
-rm *.exp
-rm -r Debug
-REM rm -r ipch
-REM rm *.pch
-REM rm *.idb
+del /Q *.obj
+del /Q *.exe
+del /Q *.pdb
+del /Q *.lib
+del /Q *.dll
+del /Q *.exp
+del /Q /S Debug
