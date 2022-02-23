@@ -531,7 +531,10 @@ bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* reso
 }
 
 void renderer_free(struct renderer_d3d12* renderer) {
-	ID3D12Debug_Release(renderer->debug);
+	if (renderer->debug)
+	{
+		ID3D12Debug_Release(renderer->debug);
+	}
 	IDXGIFactory4_Release(renderer->factory);
 	IDXGIAdapter1_Release(renderer->adapter);
 	ID3D12Device_Release(renderer->device);
