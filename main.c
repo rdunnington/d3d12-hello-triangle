@@ -30,8 +30,8 @@
 
 D3D12_CPU_DESCRIPTOR_HANDLE get_descriptor_handle_d3d12(ID3D12DescriptorHeap* heap, D3D12_DESCRIPTOR_HEAP_TYPE heapType, size_t index, ID3D12Device* device) {
 	// NOTE - The Microsoft declaration for this function is broken for the C interface
-	typedef void(*GetCpuHandleHack)(ID3D12DescriptorHeap*, D3D12_CPU_DESCRIPTOR_HANDLE*);
-	GetCpuHandleHack func = (GetCpuHandleHack)heap->lpVtbl->GetCPUDescriptorHandleForHeapStart;
+	typedef void(GetCpuHandleHack)(ID3D12DescriptorHeap*, D3D12_CPU_DESCRIPTOR_HANDLE*);
+	GetCpuHandleHack* func = (GetCpuHandleHack*)heap->lpVtbl->GetCPUDescriptorHandleForHeapStart;
 
 	D3D12_CPU_DESCRIPTOR_HANDLE handle = { 0 };
 	func(heap, &handle);
@@ -83,14 +83,7 @@ struct app_state {
 	struct windowsize windowsize;
 };
 
-void wait_for_frame(struct renderer_d3d12* renderer, struct resources_d3d12* resources);
-
-// bool renderer_init(struct renderer_d3d12* renderer, struct resources_d3d12* resources, HWND window, struct windowsize ws) {
-
-// }
-
 void wait_for_frame(struct renderer_d3d12* renderer, struct resources_d3d12* resources) {
-	// TODO make this more efficient
 	uint32_t value = resources->fenceValue;
 
 	HRESULT hr = ID3D12CommandQueue_Signal(renderer->queue, resources->fence, value);
@@ -113,11 +106,10 @@ void wait_for_frame(struct renderer_d3d12* renderer, struct resources_d3d12* res
 	resources->frameIndex = IDXGISwapChain3_GetCurrentBackBufferIndex(renderer->swapchain);
 }
 
-void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* resources, struct windowsize ws) {
+void draw(struct renderer_d3d12* renderer, struct resources_d3d12* resources, struct windowsize ws) {
 	// populate command list
 
-	// NOTE - use fences to make sure associated command lists are finished executing
-	// TODO inline wait for frame in here??
+	// use fences to make sure associated command lists are finished executing
 	HRESULT hr = ID3D12CommandAllocator_Reset(renderer->commandAllocator);
 	if (!SUCCEEDED(hr)) {
 		printf("Failed to reset command allocator: %d\n", hr);
@@ -202,7 +194,6 @@ void renderer_update(struct renderer_d3d12* renderer, struct resources_d3d12* re
 }
 
 LRESULT CALLBACK WindowProc(HWND hWindow, UINT msg, WPARAM wparam, LPARAM lparam) {
-	const POINT kMinSize = {1, 1};
 	switch (msg)
 	{
 	case WM_CREATE:
@@ -223,17 +214,9 @@ LRESULT CALLBACK WindowProc(HWND hWindow, UINT msg, WPARAM wparam, LPARAM lparam
 	case WM_PAINT:
 		{
 			struct app_state* params = (struct app_state*)GetWindowLongPtr(hWindow, GWLP_USERDATA);
-			renderer_update(params->renderer, params->resources, params->windowsize);
+			draw(params->renderer, params->resources, params->windowsize);
 			wait_for_frame(params->renderer, params->resources);
 		}
-		return 0;
-
-	case WM_GETMINMAXINFO:
-		((MINMAXINFO*)lparam)->ptMinTrackSize = kMinSize;
-		return 0;
-
-	case WM_SIZE:
-		// TODO handle resizing
 		return 0;
 	}
 	return DefWindowProc(hWindow, msg, wparam, lparam);
@@ -427,7 +410,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 
 	////////////////////////////////////////////////////////////////////////////////
 	// create pipline assets
-	
 	{
 		D3D12_VERSIONED_ROOT_SIGNATURE_DESC desc = {
 			.Version = D3D_ROOT_SIGNATURE_VERSION_1_0,
@@ -457,9 +439,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 	}
 
 	{
-		ID3DBlob* vs;
-		ID3DBlob* ps;
-
 		const char data[] = 
 			"struct PSInput {\n"
 			"	float4 position : SV_POSITION;\n"
@@ -481,8 +460,10 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 		#if BUILD_DEBUG
 			compileFlags |= D3DCOMPILE_DEBUG;
 			compileFlags |= D3DCOMPILE_SKIP_OPTIMIZATION;
-			//compilerFlags |= D3DCOMPILE_ALL_RESOURCES_BOUND; // TODO research this
 		#endif
+
+		ID3DBlob* vs = NULL;
+		ID3DBlob* ps = NULL;
 
 		HRESULT hr = D3DCompile(data, data_size, NULL, NULL, NULL, "VSMain", "vs_4_0", compileFlags, 0, &vs, NULL);
 		if (!SUCCEEDED(hr)) {
@@ -538,12 +519,12 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 			.StreamOutput = {0},
 			.BlendState = {
 				.AlphaToCoverageEnable = FALSE,
-				.IndependentBlendEnable = FALSE, // TODO may want to set to TRUE if we end up having multiple render targets
-				.RenderTarget = { defaultBlendState }, // TODO doesn't support multiple render targets
+				.IndependentBlendEnable = FALSE,
+				.RenderTarget = { defaultBlendState },
 			},
 			.SampleMask = 0xFFFFFFFF,
 			.RasterizerState = {
-				.FillMode = D3D12_FILL_MODE_SOLID, // D3D_FILL_MODE_WIREFRAME
+				.FillMode = D3D12_FILL_MODE_SOLID,
 				.CullMode = D3D12_CULL_MODE_BACK,
 				.FrontCounterClockwise = FALSE,
 				.DepthBias = 0,
@@ -563,12 +544,11 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 				.pInputElementDescs = vertexFormat,
 				.NumElements = STATIC_ARRAY_LENGTH(vertexFormat),
 			},
-			//.IBStripCutValue = D3D12_INDEX_BUFFER_STRIP_CUT_VALUE_DISABLED,
 			.PrimitiveTopologyType = D3D12_PRIMITIVE_TOPOLOGY_TYPE_TRIANGLE,
 			.NumRenderTargets = 1,
-			.RTVFormats = { DXGI_FORMAT_R8G8B8A8_UNORM }, // TODO only supports 1 render target
-			.DSVFormat = DXGI_FORMAT_UNKNOWN, // TODO ?
-			.SampleDesc = { // TODO figure out if this info should be shared between the swapchain and this?
+			.RTVFormats = { DXGI_FORMAT_R8G8B8A8_UNORM },
+			.DSVFormat = DXGI_FORMAT_UNKNOWN,
+			.SampleDesc = {
 				.Count = 1,
 				.Quality = 0,
 			},
@@ -598,7 +578,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 			return false;
 		}
 
-		// command lists begin in the recording state, but our Update() opens it
+		// command lists begin in the recording state, but the update loop opens it
 		hr = ID3D12GraphicsCommandList_Close(renderer.cmdlist);
 		if (!SUCCEEDED(hr)) {
 			printf("Failed to close command list: %u\n", hr);
@@ -693,7 +673,9 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 		.windowsize = ws,
 	};
 
+	////////////////////////////////////////////////////////////////////////////////
 	// main loop
+
 	for (bool quit = false; !quit; )
 	{
 		MSG msg;
@@ -711,6 +693,15 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 
 	wait_for_frame(&renderer, &resources);
 
+	// free resources
+	ID3D12Resource_Release(resources.vertexBuffer);
+	ID3D12Fence_Release(resources.fence);
+	CloseHandle(resources.fenceEvent);
+
+	for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
+		ID3D12Resource_Release(resources.targets[i]);
+	}
+
 	// free renderer
 	if (renderer.debug)
 	{
@@ -726,15 +717,6 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 	ID3D12RootSignature_Release(renderer.rootSignature);
 	ID3D12PipelineState_Release(renderer.pipeline);
 	ID3D12GraphicsCommandList_Release(renderer.cmdlist);
-
-	// free resources
-	ID3D12Resource_Release(resources.vertexBuffer);
-	ID3D12Fence_Release(resources.fence);
-	CloseHandle(resources.fenceEvent);
-
-	for (size_t i = 0; i < NUM_RENDERTARGETS; ++i) {
-		ID3D12Resource_Release(resources.targets[i]);
-	}
 
 	return 0;
 }
