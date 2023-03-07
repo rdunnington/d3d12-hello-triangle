@@ -10,7 +10,7 @@ demo.exe
 ```
 
 ## Build and run with cmake
-This assumes cmake is setup to geneate Visual Studio projects by default.
+This assumes cmake is setup to generate Visual Studio projects by default.
 ```
 cd d3d12-hello-triangle
 mkdir cmake_build
