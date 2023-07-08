@@ -472,7 +472,7 @@ int WINAPI WinMain(HINSTANCE hInstance, HINSTANCE hPrevInstance, LPSTR cmdline, 
 		}
 		hr = D3DCompile(data, data_size, NULL, NULL, NULL, "PSMain", "ps_4_0", compileFlags, 0, &ps, NULL);
 		if (!SUCCEEDED(hr)) {
-			printf("Failed to compile vertex shader: %u\n", hr);
+			printf("Failed to compile pixel shader: %u\n", hr);
 			return false;
 		}
 
